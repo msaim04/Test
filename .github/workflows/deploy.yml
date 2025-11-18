@@ -70,14 +70,15 @@ jobs:
       # ---------------------------------------------------
       # 8. Upload build folder
       # ---------------------------------------------------
-      - name: Upload build folder
+      - name: Upload project source
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: ".next"
-          target: "/var/www/servisca-website"
+          source: "."
+          target: "/var/www/servisca-website-"
+          rm: true
 
       # ---------------------------------------------------
       # 9. Install dependencies on server
