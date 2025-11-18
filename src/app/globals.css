@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+:root {
+  /* Theme Colors */
+  --color-primary: #19317C;
+  --color-secondary: #E0EEFF;
+  --color-social-facebook: #12467F;
+  --color-divider-primary: #2B4A98;
+  --color-text-dark-blue: #080D26;
+  --color-text-black: #000000;
+  --color-text-white: #FFFFFF;
+  --color-text-grey: #999999;
+
+  /* Background & Foreground */
+  --background: #ffffff;
+  --foreground: #080D26;
+
+  /* Fonts */
+  --font-primary: var(--font-baloo-2, "Baloo 2");
+}
+
+@theme inline {
+  --color-primary: var(--color-primary);
+  --color-secondary: var(--color-secondary);
+  --color-social-facebook: var(--color-social-facebook);
+  --color-divider-primary: var(--color-divider-primary);
+  --color-text-dark-blue: var(--color-text-dark-blue);
+  --color-text-black: var(--color-text-black);
+  --color-text-white: var(--color-text-white);
+  --color-text-grey: var(--color-text-grey);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-primary);
+  --font-mono: var(--font-primary);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-primary);
+}
+
+/* Prevent layout shifts during navigation */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Loading overlay styles */
+.auth-loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
