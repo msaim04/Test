@@ -53,16 +53,16 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
           script: |
             if [ -d "/var/www/servisca-website-" ]; then
               TIMESTAMP=$(date +%Y%m%d-%H%M%S)
               BACKUP_PATH="/var/www/servisca-website-backup-$TIMESTAMP"
               cp -r /var/www/servisca-website- "$BACKUP_PATH"
-              echo "backup_path=$BACKUP_PATH" >> $GITHUB_OUTPUT
+              echo "{\"backup_path\": \"$BACKUP_PATH\"}"
             else
-              echo "backup_path=" >> $GITHUB_OUTPUT
+              echo "{\"backup_path\": \"\"}"
             fi
+
 
 
             # -------------------------------------------------------
