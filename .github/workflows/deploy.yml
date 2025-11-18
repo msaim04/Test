@@ -64,16 +64,17 @@ jobs:
             fi
 
 
-
             # -------------------------------------------------------
             # PARSE BACKUP PATH
             # -------------------------------------------------------
-            - name: Parse backup path
+            - name: Parse backup output
               id: backup_parse
               run: |
-                RAW="${{ steps.backup.outputs.output }}"
-                echo "Backup output: $RAW"
-                BACKUP_PATH=$(echo "$RAW" | grep 'backup_path=' | cut -d'=' -f2)
+                echo "SSH OUTPUT:"
+                echo '${{ steps.backup.outputs.stdout }}'
+            
+                BACKUP_PATH=$(echo '${{ steps.backup.outputs.stdout }}' | jq -r '.backup_path')
+            
                 echo "backup_path=$BACKUP_PATH" >> $GITHUB_OUTPUT
 
 
