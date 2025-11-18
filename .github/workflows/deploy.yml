@@ -12,173 +12,150 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ---------------------------------------------------
+      # 1. Checkout repository
+      # ---------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ---------------------------------------------------
+      # 2. Setup Node.js
+      # ---------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 18
+          cache: "npm"
 
+      # ---------------------------------------------------
+      # 3. Install dependencies
+      # ---------------------------------------------------
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
+      # ---------------------------------------------------
+      # 4. Lint code
+      # ---------------------------------------------------
       - name: Lint code
         run: npm run lint
 
+      # ---------------------------------------------------
+      # 5. Run unit tests
+      # ---------------------------------------------------
       - name: Run unit tests
-        run: npm test
+        run: npm test --if-present
 
+      # ---------------------------------------------------
+      # 6. Build Next.js project
+      # ---------------------------------------------------
       - name: Build Next.js project
         run: npm run build
 
-      # ======================================================
-      # FIX #1 — SSH Known Hosts Disable for this job
-      # ======================================================
-      - name: Disable strict host key checking
-        run: |
-          mkdir -p ~/.ssh
-          echo "Host *" > ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          chmod 600 ~/.ssh/config
-
-      # -------------------------------------------------------
-      # BACKUP CURRENT VERSION (CORRECT WORKING VERSION)
-      # -------------------------------------------------------
+      # ---------------------------------------------------
+      # 7. Backup current version (just rename)
+      # ---------------------------------------------------
       - name: Backup current version
-        id: backup
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            if [ -d "/var/www/servisca-website-" ]; then
-              TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-              BACKUP_PATH="/var/www/servisca-website-backup-$TIMESTAMP"
-              cp -r /var/www/servisca-website- "$BACKUP_PATH"
-              echo "{\"backup_path\": \"$BACKUP_PATH\"}"
-            else
-              echo "{\"backup_path\": \"\"}"
+            if [ -d /var/www/servisca-website ]; then
+              rm -rf /var/www/servisca-website-prev
+              mv /var/www/servisca-website /var/www/servisca-website-prev
             fi
 
-
-            # -------------------------------------------------------
-            # PARSE BACKUP PATH
-            # -------------------------------------------------------
-            - name: Parse backup output
-              id: backup_parse
-              run: |
-                echo "SSH OUTPUT:"
-                echo '${{ steps.backup.outputs.stdout }}'
-            
-                BACKUP_PATH=$(echo '${{ steps.backup.outputs.stdout }}' | jq -r '.backup_path')
-            
-                echo "backup_path=$BACKUP_PATH" >> $GITHUB_OUTPUT
-
-
-      - name: Read backup output
-        id: readbackup
+      # ---------------------------------------------------
+      # 8. Upload build folder
+      # ---------------------------------------------------
+      - name: Upload build folder
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: servisca
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "~/backup_output.txt"
-          target: "./"
+          source: ".next"
+          target: "/var/www/servisca-website"
 
-      - name: Export backup output
-        id: exportbackup
-        run: |
-          cat backup_output.txt
-          cat backup_output.txt >> $GITHUB_OUTPUT
-
-      # ======================================================
-      # UPLOAD BUILD FILES
-      # ======================================================
-      - name: Upload build to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: servisca
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: ".next,public,package.json,package-lock.json,next.config.js"
-          target: "/var/www/servisca-website-"
-
-      # ======================================================
-      # INSTALL DEPENDENCIES
-      # ======================================================
+      # ---------------------------------------------------
+      # 9. Install dependencies on server
+      # ---------------------------------------------------
       - name: Install dependencies on server
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: servisca
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /var/www/servisca-website-
-            rm -rf node_modules
-            npm install --omit=dev
+            cd /var/www/servisca-website
+            npm ci --omit=dev
 
-      # ======================================================
-      # START WITH PM2
-      # ======================================================
+      # ---------------------------------------------------
+      # 10. Start frontend with PM2
+      # ---------------------------------------------------
       - name: Start frontend with PM2
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: servisca
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /var/www/servisca-website-
-            pm2 delete servisca-website || true
-            pm2 start "npm run start -- -p 3001" --name "servisca-website"
+            cd /var/www/servisca-website
+            pm2 delete servisca_frontend || true
+            pm2 start npm --name "servisca_frontend" -- run start
             pm2 save
 
-      # ======================================================
-      # NGINX RELOAD (works after sudo config fix)
-      # ======================================================
+      # ---------------------------------------------------
+      # 11. Reload Nginx
+      # ---------------------------------------------------
       - name: Reload Nginx
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: servisca
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            sudo systemctl reload nginx || true
+            sudo systemctl reload nginx
 
+      # ---------------------------------------------------
+      # 12. Wait for app to stabilize
+      # ---------------------------------------------------
       - name: Wait for app to stabilize
-        run: sleep 15
+        run: sleep 5
 
-      # ======================================================
-      # HEALTH CHECK
-      # ======================================================
+      # ---------------------------------------------------
+      # 13. Health check website
+      # ---------------------------------------------------
       - name: Health check website
-        id: healthcheck
-        continue-on-error: true
+        id: health
         run: |
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" ${{ secrets.FRONTEND_URL }} || true)
-          if [ "$STATUS" -ne 200 ]; then
-            echo "failed=true" >> $GITHUB_OUTPUT
+          echo "STATUS=$STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "failed=true" >> $GITHUB_ENV
             exit 1
+          else
+            echo "failed=false" >> $GITHUB_ENV
           fi
-          echo "failed=false" >> $GITHUB_OUTPUT
+        continue-on-error: true
 
-      # ======================================================
-      # ROLLBACK IF FAILED
-      # ======================================================
+      # ---------------------------------------------------
+      # 14. Rollback if failed
+      # ---------------------------------------------------
       - name: Rollback to previous version
-        if: steps.healthcheck.outputs.failed == 'true' && steps.exportbackup.outputs.backup_path != ''
-        uses: appleboy/ssh-action@v1.0.3
+        if: env.failed == 'true'
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: servisca
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            rm -rf /var/www/servisca-website-
-            cp -r ${{ steps.exportbackup.outputs.backup_path }} /var/www/servisca-website-
-            cd /var/www/servisca-website-
-            pm2 delete servisca-website || true
-            pm2 start "npm run start -- -p 3001" --name "servisca-website"
+            rm -rf /var/www/servisca-website
+            mv /var/www/servisca-website-prev /var/www/servisca-website
+            cd /var/www/servisca-website
+            pm2 delete servisca_frontend || true
+            pm2 start npm --name "servisca_frontend" -- run start
             pm2 save
-            sudo systemctl reload nginx || true
+            sudo systemctl reload nginx
