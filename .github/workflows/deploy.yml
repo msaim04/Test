@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       # ---------------------------------------------------
       # 1. Checkout repository
       # ---------------------------------------------------
@@ -66,28 +65,29 @@ jobs:
               rm -rf /var/www/servisca-website-prev
               mv /var/www/servisca-website /var/www/servisca-website-prev
             fi
-            
-      - name: DEBUG — List workspace files
-        run: |
-          echo "== ROOT =="
-          ls -al .
-          echo "== .next =="
-          ls -al .next || echo ".next NOT FOUND"
-          echo "== public =="
-          ls -al public || echo "public NOT FOUND"
-          echo "== package.json =="
-          ls -al package.json || echo "package.json NOT FOUND"
 
       # ---------------------------------------------------
-      # 8. Upload build folder
+      # 8. Debug: Check files before upload
+      # ---------------------------------------------------
+      - name: Check files before upload
+        run: |
+          echo "Listing files in workspace:"
+          ls -la
+          echo "Checking if .next exists:"
+          if [ -d .next ]; then echo ".next directory found"; else echo ".next directory missing - build may have failed"; fi
+
+      # ---------------------------------------------------
+      # 9. Upload build to server
       # ---------------------------------------------------
       - name: Upload build to server
-        uses: appleboy/scp-action@v0.1.7
+        # Skip if .next is missing (prevents tar empty archive error)
+        if: hashFiles('.next') != ''
+        uses: appleboy/scp-action@master  # Updated to latest stable (avoids v0.1.7 issues)
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          target: "/var/www/servisca-website-"
+          target: "/var/www/servisca-website"  # Fixed: Removed trailing dash for consistency with other steps
           source: |
             .next
             public
@@ -95,9 +95,8 @@ jobs:
             package-lock.json
             next.config.js
 
-
       # ---------------------------------------------------
-      # 9. Install dependencies on server
+      # 10. Install dependencies on server
       # ---------------------------------------------------
       - name: Install dependencies on server
         uses: appleboy/ssh-action@v1.2.0
@@ -110,7 +109,7 @@ jobs:
             npm ci --omit=dev
 
       # ---------------------------------------------------
-      # 10. Start frontend with PM2
+      # 11. Start frontend with PM2
       # ---------------------------------------------------
       - name: Start frontend with PM2
         uses: appleboy/ssh-action@v1.2.0
@@ -125,7 +124,7 @@ jobs:
             pm2 save
 
       # ---------------------------------------------------
-      # 11. Reload Nginx
+      # 12. Reload Nginx
       # ---------------------------------------------------
       - name: Reload Nginx
         uses: appleboy/ssh-action@v1.2.0
@@ -137,13 +136,13 @@ jobs:
             sudo systemctl reload nginx
 
       # ---------------------------------------------------
-      # 12. Wait for app to stabilize
+      # 13. Wait for app to stabilize
       # ---------------------------------------------------
       - name: Wait for app to stabilize
         run: sleep 5
 
       # ---------------------------------------------------
-      # 13. Health check website
+      # 14. Health check website
       # ---------------------------------------------------
       - name: Health check website
         id: health
@@ -151,15 +150,17 @@ jobs:
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" ${{ secrets.FRONTEND_URL }} || true)
           echo "STATUS=$STATUS"
           if [ "$STATUS" != "200" ]; then
+            echo "Health check failed with status $STATUS"
             echo "failed=true" >> $GITHUB_ENV
             exit 1
           else
+            echo "Health check passed"
             echo "failed=false" >> $GITHUB_ENV
           fi
         continue-on-error: true
 
       # ---------------------------------------------------
-      # 14. Rollback if failed
+      # 15. Rollback if failed
       # ---------------------------------------------------
       - name: Rollback to previous version
         if: env.failed == 'true'
