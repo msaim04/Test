@@ -14,17 +14,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          repository: WaxonIT/servisca-website-
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Lint code
         run: npm run lint
@@ -35,66 +33,92 @@ jobs:
       - name: Build Next.js project
         run: npm run build
 
+      # -------------------------------------------------------
+      # BACKUP
+      # -------------------------------------------------------
       - name: Backup current version
         id: backup
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
+          username: servisca
           key: ${{ secrets.SERVER_SSH_KEY }}
+          script_stop: true
           script: |
             if [ -d "/var/www/servisca-website-" ]; then
               TIMESTAMP=$(date +%Y%m%d-%H%M%S)
               BACKUP_PATH="/var/www/servisca-website-backup-$TIMESTAMP"
-              cp -r /var/www/servisca-website- $BACKUP_PATH
-               # Send output back to GitHub Actions
-              echo "::set-output name=backup_path::$BACKUP_PATH"
+              cp -r /var/www/servisca-website- "$BACKUP_PATH"
+              echo "backup_path=$BACKUP_PATH" >> /tmp/output.txt
             else
-              echo "::set-output name=backup_path::"
+              echo "backup_path=" >> /tmp/output.txt
             fi
 
-      - name: Upload build folder
+      - name: Read backup output
+        id: readbackup
+        run: |
+          cat /tmp/output.txt
+          cat /tmp/output.txt >> $GITHUB_OUTPUT
+
+      # -------------------------------------------------------
+      # UPLOAD FILES
+      # -------------------------------------------------------
+      - name: Upload build to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
+          username: servisca
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: ".next,public,package.json,next.config.ts"
+          source: ".next,public,package.json,package-lock.json,next.config.js"
           target: "/var/www/servisca-website-"
 
+      # -------------------------------------------------------
+      # INSTALL DEPENDENCIES
+      # -------------------------------------------------------
       - name: Install dependencies on server
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
+          username: servisca
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd /var/www/servisca-website-
-            npm ci --omit=dev
+            rm -rf node_modules
+            npm install --omit=dev
 
+      # -------------------------------------------------------
+      # START WITH PM2
+      # -------------------------------------------------------
       - name: Start frontend with PM2
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
+          username: servisca
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
+            cd /var/www/servisca-website-
             pm2 delete servisca-website || true
             pm2 start "npm run start -- -p 3001" --name "servisca-website"
             pm2 save
 
+      # -------------------------------------------------------
+      # RELOAD NGINX (sudo without password)
+      # -------------------------------------------------------
       - name: Reload Nginx
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
+          username: servisca
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            sudo systemctl reload nginx || echo "Nginx reload skipped"
+            sudo systemctl reload nginx || true
 
       - name: Wait for app to stabilize
         run: sleep 15
 
+      # -------------------------------------------------------
+      # HEALTH CHECK
+      # -------------------------------------------------------
       - name: Health check website
         id: healthcheck
         continue-on-error: true
@@ -106,18 +130,21 @@ jobs:
           fi
           echo "failed=false" >> $GITHUB_OUTPUT
 
+      # -------------------------------------------------------
+      # ROLLBACK IF FAILED
+      # -------------------------------------------------------
       - name: Rollback to previous version
-        if: steps.healthcheck.outputs.failed == 'true' && steps.backup.outputs.backup_path != ''
-        uses: appleboy/ssh-action@v0.1.7
+        if: steps.healthcheck.outputs.failed == 'true' && steps.readbackup.outputs.backup_path != ''
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
+          username: servisca
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             rm -rf /var/www/servisca-website-
-            cp -r ${{ steps.backup.outputs.backup_path }} /var/www/servisca-website-
+            cp -r ${{ steps.readbackup.outputs.backup_path }} /var/www/servisca-website-
+            cd /var/www/servisca-website-
             pm2 delete servisca-website || true
             pm2 start "npm run start -- -p 3001" --name "servisca-website"
             pm2 save
             sudo systemctl reload nginx || true
-            echo "Rollback completed."
