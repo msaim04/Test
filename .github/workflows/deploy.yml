@@ -10,7 +10,7 @@ jobs:
   deploy-frontend:
     name: Deploy Servisca Website
     runs-on: ubuntu-latest
-    environment: production  # Optional: Add for manual approval if needed
+    environment: production  # Optional: For manual approval
 
     steps:
       # ---------------------------------------------------
@@ -53,7 +53,7 @@ jobs:
         run: npm run build
 
       # ---------------------------------------------------
-      # 7. Debug: Check files before upload
+      # 7. Debug: Check workspace and files
       # ---------------------------------------------------
       - name: Debug - Check workspace and files
         run: |
@@ -63,10 +63,10 @@ jobs:
           echo "Checking .next directory:"
           if [ -d .next ] && [ "$(ls -A .next)" ]; then
             echo ".next exists and has contents"
-            ls -la .next | head -10  # Show first 10 items
+            ls -la .next | head -10
           else
             echo ".next is missing or empty - build may have failed"
-            exit 1  # Fail early to prevent upload issues
+            exit 1
           fi
 
       # ---------------------------------------------------
@@ -102,16 +102,27 @@ jobs:
             fi
 
       # ---------------------------------------------------
-      # 10. Upload build to server (using rsync for robustness)
+      # 10. Upload build to server (using rsync directly)
       # ---------------------------------------------------
       - name: Upload build to server
-        uses: appleboy/rsync-action@master
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: ".next/ public/ package.json package-lock.json next.config.js"  # Space-separated paths
-          target: "/var/www/servisca-website"
+        run: |
+          echo "Setting up SSH key..."
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          
+          echo "Uploading files with rsync..."
+          rsync -avz --delete \
+            .next/ \
+            public/ \
+            package.json \
+            package-lock.json \
+            next.config.js \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/servisca-website/
+          
+          echo "Cleaning up SSH key..."
+          rm ~/.ssh/id_rsa
 
       # ---------------------------------------------------
       # 11. Install dependencies on server
