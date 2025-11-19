@@ -84,19 +84,26 @@ jobs:
           echo "All required source files exist."
 
       # ---------------------------------------------------
-      # 9. Backup current version on server
+      # 9. Backup current version on server (rotate to keep 3)
       # ---------------------------------------------------
-      - name: Backup current version
+      - name: Backup current version on server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
+            BACKUP_DIR="/var/www/servisca-website-backups"
+            mkdir -p "$BACKUP_DIR"
             if [ -d /var/www/servisca-website- ]; then
-              echo "Backing up current version to /var/www/servisca-website-backup..."
-              rm -rf /var/www/servisca-website-backup
-              mv /var/www/servisca-website- /var/www/servisca-website-backup
+              echo "Rotating backups to keep max 3..."
+              # Shift existing backups
+              rm -rf "$BACKUP_DIR/backup-3"  # Remove oldest
+              mv "$BACKUP_DIR/backup-2" "$BACKUP_DIR/backup-3" 2>/dev/null || true
+              mv "$BACKUP_DIR/backup-1" "$BACKUP_DIR/backup-2" 2>/dev/null || true
+              # Create new backup
+              mv /var/www/servisca-website- "$BACKUP_DIR/backup-1"
+              echo "Backup created as $BACKUP_DIR/backup-1. Kept 3 most recent."
             else
               echo "No existing version to backup."
             fi
@@ -215,6 +222,10 @@ jobs:
       - name: Health check website
         id: health
         run: |
+          if [ -z "${{ secrets.FRONTEND_URL }}" ]; then
+            echo "Error: FRONTEND_URL secret is not set. Please add it to repository secrets."
+            exit 1
+          fi
           echo "Performing health check on ${{ secrets.FRONTEND_URL }}..."
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" ${{ secrets.FRONTEND_URL }} || echo "000")
           echo "HTTP Status: $STATUS"
@@ -240,11 +251,17 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             echo "Rolling back to previous version..."
-            rm -rf /var/www/servisca-website-
-            mv /var/www/servisca-website-backup /var/www/servisca-website-
-            cd /var/www/servisca-website-
-            pm2 delete servisca_frontend || true
-            PORT=3001 pm2 start npm --name "servisca_frontend" -- run start
-            pm2 save
-            sudo systemctl reload nginx
-            echo "Rollback complete."
+            BACKUP_DIR="/var/www/servisca-website-backups"
+            if [ -d "$BACKUP_DIR/backup-1" ]; then
+              rm -rf /var/www/servisca-website-
+              mv "$BACKUP_DIR/backup-1" /var/www/servisca-website-
+              cd /var/www/servisca-website-
+              pm2 delete servisca_frontend || true
+              PORT=3001 pm2 start npm --name "servisca_frontend" -- run start
+              pm2 save
+              sudo systemctl reload nginx
+              echo "Rollback complete."
+            else
+              echo "No backup available for rollback."
+              exit 1
+            fi
