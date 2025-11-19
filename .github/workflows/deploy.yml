@@ -2,8 +2,7 @@ name: Deploy Frontend (Servisca Website)
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ---------------------------------------------------
       # 1. Checkout repository
       # ---------------------------------------------------
@@ -19,13 +19,13 @@ jobs:
         uses: actions/checkout@v4
 
       # ---------------------------------------------------
-      # 2. Setup Node.js
+      # 2. Setup Node.js + NPM cache
       # ---------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20.10.0
-          cache: "npm"
+          node-version: 20
+          cache: npm
 
       # ---------------------------------------------------
       # 3. Install dependencies
@@ -34,27 +34,27 @@ jobs:
         run: npm ci
 
       # ---------------------------------------------------
-      # 4. Lint code
+      # 4. Lint
       # ---------------------------------------------------
       - name: Lint code
         run: npm run lint
 
       # ---------------------------------------------------
-      # 5. Run unit tests
+      # 5. Run tests (optional)
       # ---------------------------------------------------
-      - name: Run unit tests
+      - name: Run tests
         run: npm test --if-present
 
       # ---------------------------------------------------
-      # 6. Build Next.js project
+      # 6. Build Next.js
       # ---------------------------------------------------
-      - name: Build Next.js project
+      - name: Build project
         run: npm run build
 
       # ---------------------------------------------------
-      # 7. Backup current version (just rename)
+      # 7. Backup current version on server
       # ---------------------------------------------------
-      - name: Backup current version
+      - name: Backup current version (rename)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -65,40 +65,29 @@ jobs:
               rm -rf /var/www/servisca-website-prev
               mv /var/www/servisca-website /var/www/servisca-website-prev
             fi
+            mkdir -p /var/www/servisca-website
 
       # ---------------------------------------------------
-      # 8. Debug: Check files before upload
-      # ---------------------------------------------------
-      - name: Check files before upload
-        run: |
-          echo "Listing files in workspace:"
-          ls -la
-          echo "Checking if .next exists:"
-          if [ -d .next ]; then echo ".next directory found"; else echo ".next directory missing - build may have failed"; fi
-
-      # ---------------------------------------------------
-      # 9. Upload build to server
+      # 8. Upload build output
       # ---------------------------------------------------
       - name: Upload build to server
-        # Skip if .next is missing (prevents tar empty archive error)
-        if: hashFiles('.next') != ''
-        uses: appleboy/scp-action@master  # Updated to latest stable (avoids v0.1.7 issues)
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          target: "/var/www/servisca-website"  # Fixed: Removed trailing dash for consistency with other steps
+          target: "/var/www/servisca-website"
           source: |
-            .next
-            public
+            .next/**
+            public/**
             package.json
             package-lock.json
             next.config.js
 
       # ---------------------------------------------------
-      # 10. Install dependencies on server
+      # 9. Install production dependencies on server
       # ---------------------------------------------------
-      - name: Install dependencies on server
+      - name: Install server dependencies
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -109,9 +98,9 @@ jobs:
             npm ci --omit=dev
 
       # ---------------------------------------------------
-      # 11. Start frontend with PM2
+      # 10. Restart PM2
       # ---------------------------------------------------
-      - name: Start frontend with PM2
+      - name: Restart PM2
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -120,11 +109,11 @@ jobs:
           script: |
             cd /var/www/servisca-website
             pm2 delete servisca_frontend || true
-            pm2 start npm --name "servisca_frontend" -- run start
+            pm2 start npm --name servisca_frontend -- run start
             pm2 save
 
       # ---------------------------------------------------
-      # 12. Reload Nginx
+      # 11. Reload Nginx
       # ---------------------------------------------------
       - name: Reload Nginx
         uses: appleboy/ssh-action@v1.2.0
@@ -132,35 +121,22 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            sudo systemctl reload nginx
+          script: sudo systemctl reload nginx
 
       # ---------------------------------------------------
-      # 13. Wait for app to stabilize
-      # ---------------------------------------------------
-      - name: Wait for app to stabilize
-        run: sleep 5
-
-      # ---------------------------------------------------
-      # 14. Health check website
+      # 12. Health check
       # ---------------------------------------------------
       - name: Health check website
         id: health
         run: |
+          sleep 6
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" ${{ secrets.FRONTEND_URL }} || true)
           echo "STATUS=$STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Health check failed with status $STATUS"
-            echo "failed=true" >> $GITHUB_ENV
-            exit 1
-          else
-            echo "Health check passed"
-            echo "failed=false" >> $GITHUB_ENV
-          fi
+          echo "failed=$([ "$STATUS" != "200" ] && echo true || echo false)" >> $GITHUB_ENV
         continue-on-error: true
 
       # ---------------------------------------------------
-      # 15. Rollback if failed
+      # 13. Rollback if failed
       # ---------------------------------------------------
       - name: Rollback to previous version
         if: env.failed == 'true'
@@ -174,6 +150,6 @@ jobs:
             mv /var/www/servisca-website-prev /var/www/servisca-website
             cd /var/www/servisca-website
             pm2 delete servisca_frontend || true
-            pm2 start npm --name "servisca_frontend" -- run start
+            pm2 start npm --name servisca_frontend -- run start
             pm2 save
             sudo systemctl reload nginx
